@@ -1,5 +1,5 @@
-import {Observable} from 'rxjs';
-import {publish, refCount} from 'rxjs/operators';
+import {concat, from, fromEvent} from 'rxjs';
+import {finalize, flatMap, publish, refCount} from 'rxjs/operators';
 import {RoomsAdapter} from '@webex/component-adapter-interfaces';
 
 export const ROOM_UPDATED_EVENT = 'updated';
@@ -20,9 +20,26 @@ export default class RoomsSDKAdapter extends RoomsAdapter {
   }
 
   /**
-   * Fetches the room data from the sdk and returns in the shape required by adapter.
+   * Runs setup logic for the SDK rooms plugin.
+   */
+  async connect() {
+    await this.datasource.rooms.listen();
+  }
+
+  /**
+   * Runs teardown logic for th SDK rooms plugin.
+   */
+  async disconnect() {
+    this.datasource.rooms.off(ROOM_UPDATED_EVENT);
+    this.datasource.rooms.stopListening();
+    await this.datasource.internal.mercury.disconnect();
+  }
+
+  /**
+   * Returns room data in the shape required by adapter interface.
    *
-   * @param {string} ID
+   * @private
+   * @param {string} ID  ID of the room for which to fetch data
    * @returns {Room}
    * @memberof RoomsSDKAdapter
    */
@@ -39,39 +56,24 @@ export default class RoomsSDKAdapter extends RoomsAdapter {
   /**
    * Returns an observable that emits room data of the given ID.
    *
-   * @param {string} ID ID of room to get
+   * @param {string} ID  ID of room to get
    * @returns {Observable.<Room>}
    * @memberof RoomsSDKAdapter
    */
   getRoom(ID) {
     if (!(ID in this.getRoomObservables)) {
-      const source = Observable.create((observer) => {
-        // Start listening for room changes
-        this.datasource.rooms.listen();
-        this.datasource.rooms.on(ROOM_UPDATED_EVENT, () => {
-          // Room has updates, fetch and send
-          this.fetchRoom(ID)
-            .then((room) => observer.next(room))
-            .catch((error) => observer.error(error));
-        });
+      const room$ = from(this.fetchRoom(ID));
+      const roomUpdates$ = fromEvent(this.datasource.rooms.on, ROOM_UPDATED_EVENT).pipe(flatMap(() => room$));
 
-        // Get our initial room from the SDK
-        this.fetchRoom(ID)
-          .then((room) => observer.next(room))
-          .catch((error) => observer.error(error));
-
-        return () => {
-          // Cleanup when subscription count is 0
-          this.datasource.rooms.stopListening();
-          this.datasource.rooms.off(ROOM_UPDATED_EVENT);
-          delete this.getRoomObservables[ID];
-        };
-      });
+      const source$ = concat(room$, roomUpdates$);
 
       // Convert to a multicast observable
-      this.getRoomObservables[ID] = source.pipe(
+      this.getRoomObservables[ID] = source$.pipe(
         publish(),
-        refCount()
+        refCount(),
+        finalize(() => {
+          delete this.getRoomObservables[ID];
+        })
       );
     }
 
