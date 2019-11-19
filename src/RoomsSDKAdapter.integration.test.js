@@ -1,5 +1,3 @@
-import {createIntegrationTestUser, removeIntegrationTestUser} from './testHelper';
-
 import WebexSDKAdapter from './';
 
 describe('Rooms SDK Adapter', () => {
@@ -10,14 +8,12 @@ describe('Rooms SDK Adapter', () => {
   jest.setTimeout(30000);
 
   beforeAll(async () => {
-    user = await createIntegrationTestUser();
     webexSDKAdapter = new WebexSDKAdapter(user.sdk);
     await webexSDKAdapter.connect();
   });
 
   afterAll(async () => {
     try {
-      await removeIntegrationTestUser(user);
       await webexSDKAdapter.disconnect();
     } catch (reason) {
       // eslint-disable-next-line no-console
